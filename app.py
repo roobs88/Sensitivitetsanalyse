@@ -36,8 +36,13 @@ st.set_page_config(page_title="Portefølje Scenarioanalyse", page_icon="📊", l
 
 st.sidebar.title("⚙️ Innstillinger")
 
-api_key = st.sidebar.text_input("FRED API-nøkkel", type="password",
-                                 help="Gratis fra https://fred.stlouisfed.org/")
+# Les FRED API-nøkkel: prøv st.secrets først, fallback til manuell input
+api_key = st.secrets.get("FRED_API_KEY", "")
+if not api_key:
+    api_key = st.sidebar.text_input("FRED API-nøkkel", type="password",
+                                     help="Gratis fra https://fred.stlouisfed.org/")
+else:
+    st.sidebar.caption("🔑 FRED API-nøkkel lastet fra secrets")
 
 if not api_key:
     st.title("📊 Portefølje Scenarioanalyse")
