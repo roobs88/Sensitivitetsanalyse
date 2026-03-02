@@ -14,6 +14,9 @@ from config.factors import (
 from config.scenarios import SCENARIOS, BACKTEST_PERIODS
 from config.crises import CRISIS_PERIODS, SECTOR_PROXY
 from lib.crisis_analyzer import calc_all_crises
+
+# Bump denne ved faktor-/modellendringer for å tvinge cache-invalidering
+_MODEL_VERSION = 2  # v2: fjernet YIELD_CURVE
 from lib.data_fetcher import (
     fetch_stock_prices, compute_log_returns, get_all_factor_data,
     fetch_single_ticker, fetch_vix_levels,
@@ -177,17 +180,23 @@ st.sidebar.caption(f"📅 Sist oppdatert: {cache_timestamp('all_factors')}")
 # ═══════════════════════════════════════════════
 
 # Lag en stabil cache-nøkkel basert på porteføljen og modellinnstillinger
-_portfolio_key = (tuple(sorted(ACTIVE_PORTFOLIO.items())), reg_window, regime_mode, vix_threshold)
+_portfolio_key = (tuple(sorted(ACTIVE_PORTFOLIO.items())), reg_window, regime_mode, vix_threshold, _MODEL_VERSION)
 
-@st.cache_data(show_spinner="Henter aksjedata...")
-def _fetch_prices(_tickers, _force):
+@st.cache_data(show_spinner="Henter aksjedata...", ttl=3600)
+def _fetch_prices(_tickers, _force, _version=_MODEL_VERSION):
     return fetch_stock_prices(_tickers, force_refresh=_force)
 
-@st.cache_data(show_spinner="Henter faktordata...")
-def _fetch_factors(_api_key, _force):
+@st.cache_data(show_spinner="Henter faktordata...", ttl=3600)
+def _fetch_factors(_api_key, _force, _version=_MODEL_VERSION):
     return get_all_factor_data(_api_key, force_refresh=_force)
 
 with st.spinner("Laster data og kjører regresjoner..."):
+    # Tving oppdatering hvis modellversjon har endret seg
+    if st.session_state.get("_model_version") != _MODEL_VERSION:
+        st.cache_data.clear()
+        force_refresh = True
+        st.session_state["_model_version"] = _MODEL_VERSION
+
     prices = _fetch_prices(ACTIVE_TICKERS, force_refresh)
     factor_data = _fetch_factors(api_key, force_refresh)
 
