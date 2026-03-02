@@ -7,6 +7,7 @@ CRISIS_PERIODS = {
     "COVID-krasjet": ("2020-02-19", "2020-03-23"),
     "Bear-markedet 2022": ("2022-01-03", "2022-10-12"),
     "AI/Tech-rally 2023–2025": ("2023-01-01", "2025-02-19"),
+    "Tollkaos 2025": ("2025-02-19", "2025-03-13"),
 }
 
 # Sektor-ETF proxy for aksjer som mangler data i eldre perioder
