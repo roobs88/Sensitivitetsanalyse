@@ -383,12 +383,7 @@ with tab2:
         increasing={"marker": {"color": "#22c55e"}},
         decreasing={"marker": {"color": "#ef4444"}},
     ))
-    # Overstyr farger for cappede barer
-    if any_capped:
-        fig_wf.data[0].connector.line.color = "rgba(0,0,0,0.1)"
-        fig_wf.update_traces(
-            marker=dict(color=wf_colors),
-        )
+    # Cappede aksjer er allerede markert med * i labels
     fig_wf.update_layout(
         title=f"Bidrag til porteføljeeffekt — {selected_scenario}",
         yaxis_title="Bidrag (pp)", height=500, template="plotly_white",
