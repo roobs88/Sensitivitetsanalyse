@@ -1,11 +1,12 @@
 """Historiske kriseperioder og sektor-ETF proxy-mapping."""
 
-# Peak-to-trough perioder for kjente markedskriser
+# Historiske perioder (kriser + rallyer)
 CRISIS_PERIODS = {
     "Dotcom-krasjet": ("2000-03-24", "2002-10-09"),
     "Finanskrisen": ("2007-10-09", "2009-03-09"),
     "COVID-krasjet": ("2020-02-19", "2020-03-23"),
     "Bear-markedet 2022": ("2022-01-03", "2022-10-12"),
+    "AI/Tech-rally 2023–2025": ("2023-01-01", "2025-02-19"),
 }
 
 # Sektor-ETF proxy for aksjer som mangler data i eldre perioder

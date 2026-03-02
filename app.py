@@ -884,8 +884,8 @@ with tab6:
 # ───────────────────────────────────────────────
 
 with tab7:
-    st.subheader("Historiske kriser — faktiske drawdowns")
-    st.caption("Viser faktisk peak-to-trough drawdown for porteføljen i historiske kriseperioder. "
+    st.subheader("Historiske perioder — faktisk avkastning")
+    st.caption("Viser faktisk avkastning for porteføljen i historiske kriser og rallyer. "
                "Aksjer uten data erstattes med sektor-ETF proxy.")
 
     if st.button("Beregn krisedata", key="crisis_calc"):
