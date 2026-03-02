@@ -4,7 +4,6 @@ SCENARIOS = {
     "Dyp resesjon (2008-type)": {
         "US_10Y":      -2.00,
         "US_2Y":       -2.50,
-        "YIELD_CURVE": +0.50,
         "OIL_WTI":     -0.40,
         "HY_SPREAD":   +5.00,
         "USD_BROAD":   +0.08,
@@ -15,7 +14,6 @@ SCENARIOS = {
     "Mild resesjon": {
         "US_10Y":      -1.00,
         "US_2Y":       -1.25,
-        "YIELD_CURVE": +0.25,
         "OIL_WTI":     -0.20,
         "HY_SPREAD":   +2.00,
         "USD_BROAD":   +0.04,
@@ -26,7 +24,6 @@ SCENARIOS = {
     "Rentesjokk opp (+1.50%)": {
         "US_10Y":      +1.50,
         "US_2Y":       +1.00,
-        "YIELD_CURVE": +0.50,
         "OIL_WTI":     +0.10,
         "HY_SPREAD":   +0.50,
         "USD_BROAD":   +0.05,
@@ -37,7 +34,6 @@ SCENARIOS = {
     "Aggressivt rentekutt (-2.00%)": {
         "US_10Y":      -1.50,
         "US_2Y":       -2.00,
-        "YIELD_CURVE": +0.50,
         "OIL_WTI":     +0.05,
         "HY_SPREAD":   -1.00,
         "USD_BROAD":   -0.06,
@@ -48,7 +44,6 @@ SCENARIOS = {
     "Oljesjokk opp (+50%)": {
         "US_10Y":      +0.50,
         "US_2Y":       +0.30,
-        "YIELD_CURVE": +0.20,
         "OIL_WTI":     +0.50,
         "HY_SPREAD":   +0.80,
         "USD_BROAD":   +0.03,
@@ -59,7 +54,6 @@ SCENARIOS = {
     "Oljekollaps (-40%)": {
         "US_10Y":      -0.50,
         "US_2Y":       -0.40,
-        "YIELD_CURVE": -0.10,
         "OIL_WTI":     -0.40,
         "HY_SPREAD":   +1.50,
         "USD_BROAD":   +0.04,
@@ -70,7 +64,6 @@ SCENARIOS = {
     "Tech mega-rally": {
         "US_10Y":      -0.30,
         "US_2Y":       -0.20,
-        "YIELD_CURVE": -0.10,
         "OIL_WTI":     +0.05,
         "HY_SPREAD":   -0.30,
         "USD_BROAD":   -0.02,
@@ -81,7 +74,6 @@ SCENARIOS = {
     "Syklisk rotasjon / value rally": {
         "US_10Y":      +0.50,
         "US_2Y":       +0.30,
-        "YIELD_CURVE": +0.20,
         "OIL_WTI":     +0.15,
         "HY_SPREAD":   -0.50,
         "USD_BROAD":   -0.02,
@@ -92,7 +84,6 @@ SCENARIOS = {
     "Stagflasjon": {
         "US_10Y":      +1.00,
         "US_2Y":       +0.50,
-        "YIELD_CURVE": +0.50,
         "OIL_WTI":     +0.30,
         "HY_SPREAD":   +2.50,
         "USD_BROAD":   +0.05,
@@ -103,7 +94,6 @@ SCENARIOS = {
     "Goldilocks / soft landing": {
         "US_10Y":      -0.30,
         "US_2Y":       -0.50,
-        "YIELD_CURVE": +0.20,
         "OIL_WTI":     +0.05,
         "HY_SPREAD":   -0.60,
         "USD_BROAD":   -0.03,
@@ -114,7 +104,6 @@ SCENARIOS = {
     "Multippelkompresjon / valuation reset": {
         "US_10Y":      +0.60,
         "US_2Y":       +0.40,
-        "YIELD_CURVE": +0.20,
         "OIL_WTI":     +0.05,
         "HY_SPREAD":   +0.80,
         "USD_BROAD":   +0.02,
@@ -125,7 +114,6 @@ SCENARIOS = {
     "USD-kollaps (NOK-risiko)": {
         "US_10Y":      +0.80,
         "US_2Y":       +0.50,
-        "YIELD_CURVE": +0.30,
         "OIL_WTI":     +0.15,
         "HY_SPREAD":   +1.20,
         "USD_BROAD":   -0.12,
@@ -136,7 +124,6 @@ SCENARIOS = {
     "Handelskrig / tariff-eskalering": {
         "US_10Y":      -0.40,
         "US_2Y":       -0.30,
-        "YIELD_CURVE": -0.10,
         "OIL_WTI":     -0.10,
         "HY_SPREAD":   +1.80,
         "USD_BROAD":   +0.06,
@@ -147,7 +134,6 @@ SCENARIOS = {
     "AI-desillusjonering / capex-bakrus": {
         "US_10Y":      -0.20,
         "US_2Y":       -0.15,
-        "YIELD_CURVE": -0.05,
         "OIL_WTI":     -0.05,
         "HY_SPREAD":   +0.60,
         "USD_BROAD":   +0.01,
@@ -158,7 +144,6 @@ SCENARIOS = {
     "Regulatorisk / antitrust-sjokk": {
         "US_10Y":      +0.10,
         "US_2Y":       +0.05,
-        "YIELD_CURVE": +0.05,
         "OIL_WTI":     +0.02,
         "HY_SPREAD":   +0.40,
         "USD_BROAD":   -0.01,
@@ -169,7 +154,6 @@ SCENARIOS = {
     "Higher for longer (vedvarende 3-4% inflasjon)": {
         "US_10Y":      +1.00,
         "US_2Y":       +0.75,
-        "YIELD_CURVE": +0.25,
         "OIL_WTI":     +0.15,
         "HY_SPREAD":   +0.60,
         "USD_BROAD":   +0.04,

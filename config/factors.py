@@ -15,13 +15,6 @@ FRED_FACTORS = {
         "unit": "%",
         "transform": "diff",
     },
-    "YIELD_CURVE": {
-        "series": "T10Y2Y",
-        "desc": "Rentekurven (10Y minus 2Y) — bratt = vekstoptimisme, invertert = resesjonsvarsel",
-        "short": "Rentekurve",
-        "unit": "%",
-        "transform": "diff",
-    },
     "OIL_WTI": {
         "series": "DCOILWTICO",
         "desc": "Oljepris (WTI) — drivstoff for inflasjon og energikostnader",

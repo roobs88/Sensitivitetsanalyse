@@ -170,6 +170,31 @@ def fetch_yahoo_factors(force_refresh: bool = False) -> pd.DataFrame:
     return result
 
 
+def fetch_vix_levels(force_refresh: bool = False) -> pd.Series:
+    """Hent VIX close-priser (nivå, ikke diff) for regime-klassifisering."""
+    cached = None if force_refresh else load_cache("vix_levels")
+    if cached is not None:
+        return cached
+
+    try:
+        vix_data = yf.download("^VIX", start=DATA_START_DATE,
+                               auto_adjust=True, progress=False)
+        if vix_data.empty:
+            return pd.Series(dtype=float)
+        close = vix_data["Close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close.name = "VIX_LEVEL"
+        close.index = pd.to_datetime(close.index)
+        if close.index.tz is not None:
+            close.index = close.index.tz_localize(None)
+        close = close.sort_index()
+        save_cache(close, "vix_levels")
+        return close
+    except Exception:
+        return pd.Series(dtype=float)
+
+
 def get_all_factor_data(api_key: str, force_refresh: bool = False) -> pd.DataFrame:
     """Kombiner FRED- og Yahoo-faktorer til én aligned DataFrame."""
     cached = None if force_refresh else load_cache("all_factors")

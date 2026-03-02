@@ -14,6 +14,29 @@ def _cap_impact(impact: float) -> float:
     return max(CAP_FLOOR, min(CAP_CEIL, impact))
 
 
+def calc_stock_scenario_impact_regime(result: dict, scenario: dict,
+                                      vix_threshold: float = 25,
+                                      current_vix: float = 20) -> float:
+    """Beregn estimert avkastning med regime-betaer.
+
+    Velger stress- eller normal-betaer basert på implied VIX etter sjokket.
+    """
+    vix_shock = scenario.get("VIX", 0.0)
+    implied_vix = current_vix + vix_shock
+
+    if implied_vix > vix_threshold:
+        betas = result.get("betas_stress", result["betas"])
+    else:
+        betas = result.get("betas_normal", result["betas"])
+
+    impact = 0.0
+    for factor in FACTOR_NAMES:
+        beta = betas.get(factor, 0.0)
+        shock = scenario.get(factor, 0.0)
+        impact += beta * shock
+    return impact
+
+
 def calc_stock_scenario_impact(betas: dict, scenario: dict) -> float:
     """Beregn estimert avkastning for én aksje i ett scenario.
 
@@ -27,16 +50,23 @@ def calc_stock_scenario_impact(betas: dict, scenario: dict) -> float:
     return impact
 
 
-def calc_all_stock_impacts(regression_results: dict, scenario: dict) -> dict:
+def calc_all_stock_impacts(regression_results: dict, scenario: dict,
+                           regime_mode: bool = False, vix_threshold: float = 25,
+                           current_vix: float = 20) -> dict:
     """Beregn cappet estimert avkastning for alle aksjer i ett scenario."""
     impacts = {}
     for ticker, result in regression_results.items():
-        raw = calc_stock_scenario_impact(result["betas"], scenario)
+        if regime_mode:
+            raw = calc_stock_scenario_impact_regime(result, scenario, vix_threshold, current_vix)
+        else:
+            raw = calc_stock_scenario_impact(result["betas"], scenario)
         impacts[ticker] = _cap_impact(raw)
     return impacts
 
 
-def calc_all_stock_impacts_detailed(regression_results: dict, scenario: dict) -> dict:
+def calc_all_stock_impacts_detailed(regression_results: dict, scenario: dict,
+                                    regime_mode: bool = False, vix_threshold: float = 25,
+                                    current_vix: float = 20) -> dict:
     """Beregn estimert avkastning med both rå og cappet verdi + flagg.
 
     Returns:
@@ -44,7 +74,10 @@ def calc_all_stock_impacts_detailed(regression_results: dict, scenario: dict) ->
     """
     details = {}
     for ticker, result in regression_results.items():
-        raw = calc_stock_scenario_impact(result["betas"], scenario)
+        if regime_mode:
+            raw = calc_stock_scenario_impact_regime(result, scenario, vix_threshold, current_vix)
+        else:
+            raw = calc_stock_scenario_impact(result["betas"], scenario)
         capped = _cap_impact(raw)
         details[ticker] = {
             "raw": raw,
@@ -55,12 +88,16 @@ def calc_all_stock_impacts_detailed(regression_results: dict, scenario: dict) ->
 
 
 def calc_portfolio_impact(regression_results: dict, weights: dict,
-                          scenario: dict) -> float:
+                          scenario: dict, regime_mode: bool = False,
+                          vix_threshold: float = 25, current_vix: float = 20) -> float:
     """Beregn estimert porteføljeavkastning i ett scenario.
 
     Inkluderer CASH med 0 effekt.
     """
-    stock_impacts = calc_all_stock_impacts(regression_results, scenario)
+    stock_impacts = calc_all_stock_impacts(regression_results, scenario,
+                                           regime_mode=regime_mode,
+                                           vix_threshold=vix_threshold,
+                                           current_vix=current_vix)
     portfolio_return = 0.0
     for ticker, w in weights.items():
         if ticker == "CASH":
@@ -71,15 +108,21 @@ def calc_portfolio_impact(regression_results: dict, weights: dict,
     return portfolio_return
 
 
-def calc_benchmark_impact(spy_result: dict, scenario: dict) -> float:
+def calc_benchmark_impact(spy_result: dict, scenario: dict,
+                          regime_mode: bool = False, vix_threshold: float = 25,
+                          current_vix: float = 20) -> float:
     """Beregn estimert S&P 500-avkastning i ett scenario."""
     if spy_result is None:
         return 0.0
+    if regime_mode:
+        return calc_stock_scenario_impact_regime(spy_result, scenario, vix_threshold, current_vix)
     return calc_stock_scenario_impact(spy_result["betas"], scenario)
 
 
 def calc_all_scenarios(regression_results: dict, spy_result: dict,
-                       weights: dict, scenarios: dict) -> pd.DataFrame:
+                       weights: dict, scenarios: dict,
+                       regime_mode: bool = False, vix_threshold: float = 25,
+                       current_vix: float = 20) -> pd.DataFrame:
     """Beregn alle scenarioer og returner sammendrag.
 
     Returns:
@@ -87,14 +130,22 @@ def calc_all_scenarios(regression_results: dict, spy_result: dict,
     """
     rows = []
     for name, scenario in scenarios.items():
-        port = calc_portfolio_impact(regression_results, weights, scenario)
-        bench = calc_benchmark_impact(spy_result, scenario)
-        rows.append({
+        port = calc_portfolio_impact(regression_results, weights, scenario,
+                                     regime_mode=regime_mode, vix_threshold=vix_threshold,
+                                     current_vix=current_vix)
+        bench = calc_benchmark_impact(spy_result, scenario,
+                                      regime_mode=regime_mode, vix_threshold=vix_threshold,
+                                      current_vix=current_vix)
+        row = {
             "Scenario": name,
             "Portefølje": port * 100,  # til prosent
             "S&P 500": bench * 100,
             "Differanse": (port - bench) * 100,
-        })
+        }
+        if regime_mode:
+            implied_vix = current_vix + scenario.get("VIX", 0.0)
+            row["Regime"] = "Stress" if implied_vix > vix_threshold else "Normal"
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -125,14 +176,18 @@ def calc_factor_decomposition(port_betas: dict, spy_betas: dict,
 
 
 def calc_stock_contributions(regression_results: dict, weights: dict,
-                             scenario: dict) -> pd.DataFrame:
+                             scenario: dict, regime_mode: bool = False,
+                             vix_threshold: float = 25, current_vix: float = 20) -> pd.DataFrame:
     """Beregn bidrag fra hver aksje til porteføljeeffekten (med capping).
 
     Returns:
         DataFrame med kolonner: Ticker, Vekt, Estimert effekt, Bidrag,
         Uklippet effekt, Cappet (flagg)
     """
-    details = calc_all_stock_impacts_detailed(regression_results, scenario)
+    details = calc_all_stock_impacts_detailed(regression_results, scenario,
+                                              regime_mode=regime_mode,
+                                              vix_threshold=vix_threshold,
+                                              current_vix=current_vix)
     rows = []
     for ticker, w in weights.items():
         if ticker == "CASH":
@@ -163,7 +218,8 @@ def calc_stock_contributions(regression_results: dict, weights: dict,
 
 
 def calc_heatmap_data(regression_results: dict, scenarios: dict,
-                      weights: dict) -> pd.DataFrame:
+                      weights: dict, regime_mode: bool = False,
+                      vix_threshold: float = 25, current_vix: float = 20) -> pd.DataFrame:
     """Beregn heatmap-data: aksjer × scenarioer.
 
     Returns:
@@ -175,7 +231,10 @@ def calc_heatmap_data(regression_results: dict, scenarios: dict,
 
     data = {}
     for scenario_name, scenario in scenarios.items():
-        stock_impacts = calc_all_stock_impacts(regression_results, scenario)
+        stock_impacts = calc_all_stock_impacts(regression_results, scenario,
+                                               regime_mode=regime_mode,
+                                               vix_threshold=vix_threshold,
+                                               current_vix=current_vix)
         col = []
         for ticker in sorted_tickers:
             col.append(stock_impacts.get(ticker, 0.0) * 100)
@@ -236,7 +295,8 @@ def calc_backtest(factor_data: pd.DataFrame, stock_returns: pd.DataFrame,
 
 def calc_vulnerability_analysis(regression_results: dict, spy_result: dict,
                                  weights: dict, scenarios: dict,
-                                 port_betas: dict) -> dict:
+                                 port_betas: dict, regime_mode: bool = False,
+                                 vix_threshold: float = 25, current_vix: float = 20) -> dict:
     """Analyser porteføljens sårbarhet og generer forbedringsforslag.
 
     Returns:
@@ -252,12 +312,19 @@ def calc_vulnerability_analysis(regression_results: dict, spy_result: dict,
     # Beregn alle scenarioer
     scenario_results = []
     for name, scenario in scenarios.items():
-        port = calc_portfolio_impact(regression_results, weights, scenario) * 100
-        bench = calc_benchmark_impact(spy_result, scenario) * 100
+        port = calc_portfolio_impact(regression_results, weights, scenario,
+                                     regime_mode=regime_mode, vix_threshold=vix_threshold,
+                                     current_vix=current_vix) * 100
+        bench = calc_benchmark_impact(spy_result, scenario,
+                                      regime_mode=regime_mode, vix_threshold=vix_threshold,
+                                      current_vix=current_vix) * 100
         diff = port - bench
 
         # Stock contributions for this scenario
-        stock_impacts = calc_all_stock_impacts(regression_results, scenario)
+        stock_impacts = calc_all_stock_impacts(regression_results, scenario,
+                                               regime_mode=regime_mode,
+                                               vix_threshold=vix_threshold,
+                                               current_vix=current_vix)
         stock_contribs = []
         for ticker, w in weights.items():
             if ticker == "CASH":

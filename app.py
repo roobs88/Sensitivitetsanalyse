@@ -12,12 +12,15 @@ from config.factors import (
     FRED_FACTORS, YAHOO_FACTORS,
 )
 from config.scenarios import SCENARIOS, BACKTEST_PERIODS
+from config.crises import CRISIS_PERIODS, SECTOR_PROXY
+from lib.crisis_analyzer import calc_all_crises
 from lib.data_fetcher import (
     fetch_stock_prices, compute_log_returns, get_all_factor_data,
-    fetch_single_ticker,
+    fetch_single_ticker, fetch_vix_levels,
 )
 from lib.factor_model import (
     run_all_regressions, run_single_regression, calc_vif, portfolio_betas,
+    run_all_regime_regressions, run_regime_regression, portfolio_betas_regime,
 )
 from lib.scenario_engine import (
     calc_all_scenarios, calc_stock_contributions, calc_heatmap_data,
@@ -146,6 +149,23 @@ st.sidebar.download_button(
 )
 
 st.sidebar.divider()
+st.sidebar.subheader("Modellinnstillinger")
+reg_years = st.sidebar.slider("Regresjonsvindu (år)", min_value=1, max_value=10, value=3,
+                               help="Antall år med data for OLS-regresjon. Kortere = mer relevant, lengre = mer stabilt.")
+reg_window = reg_years * 252
+
+regime_mode = st.sidebar.toggle("Regime-betaer (VIX-basert)", value=False,
+                                 help="Bruker separate betaer for rolige og stressede markeder basert på VIX-nivå.")
+if regime_mode:
+    vix_threshold = st.sidebar.slider("VIX-terskel (normal/stress)", min_value=15, max_value=40, value=25,
+                                       help="VIX over denne verdien = stress-regime")
+    current_vix = st.sidebar.number_input("Nåværende VIX-nivå", min_value=10.0, max_value=80.0, value=20.0, step=1.0,
+                                           help="Brukes til å beregne implied VIX etter sjokk")
+else:
+    vix_threshold = 25
+    current_vix = 20.0
+
+st.sidebar.divider()
 force_refresh = st.sidebar.button("🔄 Oppdater data")
 sig_only = st.sidebar.toggle("Vis kun signifikante faktorer (p < 0.05)", value=False)
 
@@ -156,8 +176,8 @@ st.sidebar.caption(f"📅 Sist oppdatert: {cache_timestamp('all_factors')}")
 # DATAHENTING OG MODELLKJØRING
 # ═══════════════════════════════════════════════
 
-# Lag en stabil cache-nøkkel basert på porteføljen
-_portfolio_key = tuple(sorted(ACTIVE_PORTFOLIO.items()))
+# Lag en stabil cache-nøkkel basert på porteføljen og modellinnstillinger
+_portfolio_key = (tuple(sorted(ACTIVE_PORTFOLIO.items())), reg_window, regime_mode, vix_threshold)
 
 @st.cache_data(show_spinner="Henter aksjedata...")
 def _fetch_prices(_tickers, _force):
@@ -178,13 +198,28 @@ with st.spinner("Laster data og kjører regresjoner..."):
     returns = compute_log_returns(prices)
     norm_weights = normalize_weights(ACTIVE_PORTFOLIO)
 
+    # Hent VIX-nivåer for regime-modus
+    if regime_mode:
+        vix_levels = fetch_vix_levels(force_refresh)
+    else:
+        vix_levels = pd.Series(dtype=float)
+
     # Kjør regresjoner (re-kjør hvis porteføljen endres)
     cached_key = st.session_state.get("_portfolio_key")
     if cached_key != _portfolio_key or force_refresh:
-        reg_results = run_all_regressions(returns, factor_data, ACTIVE_TICKERS)
-        spy_result = run_single_regression(
-            returns[BENCHMARK_TICKER].dropna(), factor_data
-        ) if BENCHMARK_TICKER in returns.columns else None
+        if regime_mode and not vix_levels.empty:
+            reg_results = run_all_regime_regressions(
+                returns, factor_data, ACTIVE_TICKERS, vix_levels,
+                threshold=vix_threshold, window=reg_window)
+            spy_result = run_regime_regression(
+                returns[BENCHMARK_TICKER].dropna(), factor_data, vix_levels,
+                threshold=vix_threshold, window=reg_window
+            ) if BENCHMARK_TICKER in returns.columns else None
+        else:
+            reg_results = run_all_regressions(returns, factor_data, ACTIVE_TICKERS, window=reg_window)
+            spy_result = run_single_regression(
+                returns[BENCHMARK_TICKER].dropna(), factor_data, window=reg_window
+            ) if BENCHMARK_TICKER in returns.columns else None
         vif_scores = calc_vif(factor_data)
         port_betas = portfolio_betas(reg_results, norm_weights, FACTOR_NAMES)
 
@@ -199,16 +234,19 @@ with st.spinner("Laster data og kjører regresjoner..."):
     vif_scores = st.session_state["vif_scores"]
     port_betas = st.session_state["port_betas"]
 
+    # Regime-kwargs for scenario-funksjoner
+    _regime_kw = dict(regime_mode=regime_mode, vix_threshold=vix_threshold, current_vix=current_vix)
+
 # ═══════════════════════════════════════════════
 # FANER
 # ═══════════════════════════════════════════════
 
 st.title("📊 Portefølje Scenarioanalyse")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Scenario Overview", "Scenario Deep Dive", "Faktoreksponering",
     "Regresjonsdiagnostikk", "Custom Scenario", "Historisk Backtest",
-    "Porteføljeoptimering", "Aksjesøk",
+    "Historiske Kriser", "Porteføljeoptimering", "Aksjesøk",
 ])
 
 # ───────────────────────────────────────────────
@@ -216,18 +254,20 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
 # ───────────────────────────────────────────────
 
 with tab1:
-    scenario_df = calc_all_scenarios(reg_results, spy_result, ACTIVE_PORTFOLIO, SCENARIOS)
+    scenario_df = calc_all_scenarios(reg_results, spy_result, ACTIVE_PORTFOLIO, SCENARIOS, **_regime_kw)
 
     # Oppsummering
     n_beat = (scenario_df["Differanse"] > 0).sum()
     worst_vs = scenario_df.loc[scenario_df["Differanse"].idxmin(), "Scenario"]
     best_vs = scenario_df.loc[scenario_df["Differanse"].idxmax(), "Scenario"]
 
-    st.info(
-        f"Porteføljen slår S&P 500 i **{n_beat} av {len(SCENARIOS)}** scenarioer. "
-        f"Mest sårbar vs benchmark i **{worst_vs}**. "
-        f"Best posisjonert vs benchmark i **{best_vs}**."
-    )
+    info_msg = (f"Porteføljen slår S&P 500 i **{n_beat} av {len(SCENARIOS)}** scenarioer. "
+                f"Mest sårbar vs benchmark i **{worst_vs}**. "
+                f"Best posisjonert vs benchmark i **{best_vs}**.")
+    if regime_mode:
+        n_stress = (scenario_df.get("Regime") == "Stress").sum() if "Regime" in scenario_df.columns else 0
+        info_msg += f" | Regime-modus aktiv: **{n_stress}** scenarioer bruker stress-betaer."
+    st.info(info_msg)
 
     # Grouped bar chart
     fig_bar = go.Figure()
@@ -253,7 +293,7 @@ with tab1:
 
     # Heatmap
     st.subheader("Aksje-heatmap")
-    heatmap_df = calc_heatmap_data(reg_results, SCENARIOS, ACTIVE_PORTFOLIO)
+    heatmap_df = calc_heatmap_data(reg_results, SCENARIOS, ACTIVE_PORTFOLIO, **_regime_kw)
     fig_heat = px.imshow(
         heatmap_df.values,
         x=heatmap_df.columns, y=heatmap_df.index,
@@ -275,9 +315,15 @@ with tab2:
     selected_scenario = st.selectbox("Velg scenario", list(SCENARIOS.keys()))
     scenario = SCENARIOS[selected_scenario]
 
-    port_impact = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, scenario) * 100
-    bench_impact = calc_benchmark_impact(spy_result, scenario) * 100
+    port_impact = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, scenario, **_regime_kw) * 100
+    bench_impact = calc_benchmark_impact(spy_result, scenario, **_regime_kw) * 100
     diff_impact = port_impact - bench_impact
+
+    # Regime-indikator
+    if regime_mode:
+        implied_vix = current_vix + scenario.get("VIX", 0.0)
+        regime_label = "Stress" if implied_vix > vix_threshold else "Normal"
+        st.caption(f"Regime: **{regime_label}** (implied VIX: {implied_vix:.0f})")
 
     # KPI-bokser
     c1, c2, c3 = st.columns(3)
@@ -290,7 +336,7 @@ with tab2:
 
     # Waterfall chart
     st.subheader("Bidrag per aksje (waterfall)")
-    contrib_df = calc_stock_contributions(reg_results, ACTIVE_PORTFOLIO, scenario)
+    contrib_df = calc_stock_contributions(reg_results, ACTIVE_PORTFOLIO, scenario, **_regime_kw)
     contrib_df = contrib_df[contrib_df["Ticker"] != "CASH"]
     any_capped = contrib_df["Cappet"].any()
 
@@ -642,6 +688,43 @@ with tab4:
                 lambda p: "✅" if p < 0.05 else "")
             st.dataframe(detail, use_container_width=True, hide_index=True)
 
+    # Regime-statistikk
+    if regime_mode:
+        st.divider()
+        st.subheader("Regime-statistikk (VIX-basert)")
+        st.caption(f"Terskel: VIX = {vix_threshold} | Nåværende VIX: {current_vix}")
+
+        regime_rows = []
+        for ticker in ACTIVE_TICKERS:
+            if ticker not in reg_results:
+                continue
+            r = reg_results[ticker]
+            counts = r.get("regime_counts", {})
+            if counts:
+                regime_rows.append({
+                    "Ticker": ticker,
+                    "Normal obs": counts.get("normal", "N/A"),
+                    "Stress obs": counts.get("stress", "N/A"),
+                    "Stress-andel (%)": round(counts.get("stress", 0) /
+                                              max(1, counts.get("normal", 0) + counts.get("stress", 0)) * 100, 1),
+                })
+        if regime_rows:
+            st.dataframe(pd.DataFrame(regime_rows), use_container_width=True, hide_index=True)
+
+            # Vis eksempel på beta-forskjell for SPY
+            if spy_result and "betas_normal" in spy_result and "betas_stress" in spy_result:
+                st.markdown("**SPY beta-sammenligning: Normal vs Stress**")
+                beta_comp = []
+                for f in FACTOR_NAMES:
+                    beta_comp.append({
+                        "Faktor": FACTOR_SHORT_NAMES.get(f, f),
+                        "Normal beta": round(spy_result["betas_normal"].get(f, 0), 6),
+                        "Stress beta": round(spy_result["betas_stress"].get(f, 0), 6),
+                        "Differanse": round(spy_result["betas_stress"].get(f, 0) -
+                                            spy_result["betas_normal"].get(f, 0), 6),
+                    })
+                st.dataframe(pd.DataFrame(beta_comp), use_container_width=True, hide_index=True)
+
 # ───────────────────────────────────────────────
 # FANE 5: CUSTOM SCENARIO BUILDER
 # ───────────────────────────────────────────────
@@ -674,8 +757,8 @@ with tab5:
 
     # Resultater
     st.divider()
-    custom_port = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, custom_shocks) * 100
-    custom_bench = calc_benchmark_impact(spy_result, custom_shocks) * 100
+    custom_port = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, custom_shocks, **_regime_kw) * 100
+    custom_bench = calc_benchmark_impact(spy_result, custom_shocks, **_regime_kw) * 100
     custom_diff = custom_port - custom_bench
 
     k1, k2, k3 = st.columns(3)
@@ -685,7 +768,7 @@ with tab5:
               delta_color="normal" if custom_diff >= 0 else "inverse")
 
     # Topp 5 vinnere/tapere
-    custom_impacts = calc_all_stock_impacts(reg_results, custom_shocks)
+    custom_impacts = calc_all_stock_impacts(reg_results, custom_shocks, **_regime_kw)
     impact_sorted = sorted(custom_impacts.items(), key=lambda x: x[1])
 
     w1, w2 = st.columns(2)
@@ -699,7 +782,7 @@ with tab5:
             st.markdown(f"🟢 {ticker}: {imp*100:.2f}%")
 
     # Mini waterfall
-    contrib = calc_stock_contributions(reg_results, ACTIVE_PORTFOLIO, custom_shocks)
+    contrib = calc_stock_contributions(reg_results, ACTIVE_PORTFOLIO, custom_shocks, **_regime_kw)
     contrib = contrib[contrib["Ticker"] != "CASH"]
     custom_capped = contrib["Cappet"].any()
 
@@ -792,15 +875,174 @@ with tab6:
         st.plotly_chart(fig_bt, use_container_width=True)
 
 # ───────────────────────────────────────────────
-# FANE 7: PORTEFØLJEOPTIMERING
+# ───────────────────────────────────────────────
+# FANE 7: HISTORISKE KRISER
 # ───────────────────────────────────────────────
 
 with tab7:
+    st.subheader("Historiske kriser — faktiske drawdowns")
+    st.caption("Viser faktisk peak-to-trough drawdown for porteføljen i historiske kriseperioder. "
+               "Aksjer uten data erstattes med sektor-ETF proxy.")
+
+    if st.button("Beregn krisedata", key="crisis_calc"):
+        with st.spinner("Henter historiske priser fra Yahoo Finance..."):
+            norm_w = normalize_weights(ACTIVE_PORTFOLIO)
+            crisis_results = calc_all_crises(norm_w, SECTOR_PROXY)
+            st.session_state["crisis_results"] = crisis_results
+
+    if "crisis_results" in st.session_state:
+        crisis_results = st.session_state["crisis_results"]
+
+        # ── Oppsummeringstabell ──
+        summary_rows = []
+        for crisis_name, data in crisis_results.items():
+            p_dd = data["portefolje_drawdown"]
+            s_dd = data["spy_drawdown"]
+            n_proxy = sum(1 for v in data["proxy_info"].values() if v is not None)
+            summary_rows.append({
+                "Krise": crisis_name,
+                "Periode": f"{data['periode'][0]} → {data['periode'][1]}",
+                "Portefølje (%)": p_dd,
+                "S&P 500 (%)": s_dd,
+                "Differanse (pp)": round(p_dd - s_dd, 2) if p_dd is not None and s_dd is not None else None,
+                "Proxyer brukt": n_proxy,
+            })
+        summary_df = pd.DataFrame(summary_rows)
+
+        st.markdown("### Oversikt")
+
+        # KPI-er for verste krise
+        worst = summary_df.loc[summary_df["Portefølje (%)"].idxmin()]
+        col_k1, col_k2, col_k3 = st.columns(3)
+        col_k1.metric("Verste krise", worst["Krise"])
+        col_k2.metric("Portefølje drawdown", f"{worst['Portefølje (%)']:.1f}%")
+        col_k3.metric("vs S&P 500", f"{worst['Differanse (pp)']:+.1f}pp")
+
+        st.dataframe(
+            summary_df.style.format({
+                "Portefølje (%)": "{:.1f}",
+                "S&P 500 (%)": "{:.1f}",
+                "Differanse (pp)": "{:+.1f}",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # ── Grouped bar chart: portefølje vs SPY per krise ──
+        fig_crisis = go.Figure()
+        fig_crisis.add_trace(go.Bar(
+            name="Portefølje", x=summary_df["Krise"],
+            y=summary_df["Portefølje (%)"],
+            marker_color="#ef4444",
+        ))
+        fig_crisis.add_trace(go.Bar(
+            name="S&P 500", x=summary_df["Krise"],
+            y=summary_df["S&P 500 (%)"],
+            marker_color="#9ca3af",
+        ))
+        fig_crisis.update_layout(
+            barmode="group", title="Portefølje vs S&P 500 — historiske kriser",
+            yaxis_title="Drawdown (%)", height=450, template="plotly_white",
+        )
+        st.plotly_chart(fig_crisis, use_container_width=True)
+
+        # ── Heatmap: aksjer × kriser ──
+        st.markdown("### Heatmap — drawdown per aksje og krise")
+        heatmap_data = {}
+        for crisis_name, data in crisis_results.items():
+            for stock in data["aksjer"]:
+                ticker = stock["Ticker"]
+                if ticker not in heatmap_data:
+                    heatmap_data[ticker] = {}
+                label = f"{stock['Drawdown (%)']}%"
+                if stock["Proxy"]:
+                    label += " *"
+                heatmap_data[ticker][crisis_name] = stock["Drawdown (%)"]
+
+        if heatmap_data:
+            hm_df = pd.DataFrame(heatmap_data).T
+            hm_df = hm_df[list(CRISIS_PERIODS.keys())]  # riktig rekkefølge
+            hm_df = hm_df.sort_values(hm_df.columns[0])  # sorter etter første krise
+
+            fig_hm = px.imshow(
+                hm_df.values, x=hm_df.columns.tolist(), y=hm_df.index.tolist(),
+                color_continuous_scale="RdYlGn", aspect="auto",
+                labels=dict(color="Drawdown (%)"),
+                text_auto=".0f",
+            )
+            fig_hm.update_layout(
+                title="Drawdown per aksje × krise",
+                height=max(400, len(hm_df) * 22),
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_hm, use_container_width=True)
+            st.caption("* = sektor-ETF proxy brukt (aksjen eksisterte ikke i perioden)")
+
+        # ── Per-krise deep dive ──
+        st.markdown("### Detaljer per krise")
+        sel_crisis = st.selectbox("Velg krise", list(CRISIS_PERIODS.keys()), key="crisis_select")
+        c_data = crisis_results[sel_crisis]
+
+        if c_data["aksjer"]:
+            c_df = pd.DataFrame(c_data["aksjer"])
+            # Marker proxyer
+            c_df["Datakilde"] = c_df["Proxy"].apply(
+                lambda x: f"Proxy: {x}" if x else "Faktisk"
+            )
+
+            col_c1, col_c2, col_c3 = st.columns(3)
+            col_c1.metric("Portefølje", f"{c_data['portefolje_drawdown']:.1f}%")
+            col_c2.metric("S&P 500", f"{c_data['spy_drawdown']:.1f}%")
+            diff = c_data['portefolje_drawdown'] - c_data['spy_drawdown']
+            col_c3.metric("Differanse", f"{diff:+.1f}pp")
+
+            # Waterfall-lignende bar chart
+            fig_detail = go.Figure()
+            colors = ["#f97316" if row["Proxy"] else "#3b82f6" for _, row in c_df.iterrows()]
+            fig_detail.add_trace(go.Bar(
+                x=c_df["Ticker"], y=c_df["Drawdown (%)"],
+                marker_color=colors,
+                text=c_df["Drawdown (%)"].apply(lambda x: f"{x:.1f}%"),
+                textposition="outside",
+            ))
+            fig_detail.update_layout(
+                title=f"{sel_crisis}: Drawdown per aksje",
+                yaxis_title="Drawdown (%)", height=500,
+                template="plotly_white", showlegend=False,
+                xaxis_tickangle=-45,
+            )
+            # Legg til legend manuelt
+            fig_detail.add_trace(go.Bar(x=[None], y=[None], marker_color="#3b82f6", name="Faktisk data", showlegend=True))
+            fig_detail.add_trace(go.Bar(x=[None], y=[None], marker_color="#f97316", name="Sektor-proxy", showlegend=True))
+            fig_detail.update_layout(showlegend=True)
+            st.plotly_chart(fig_detail, use_container_width=True)
+
+            # Tabell
+            show_cols = ["Ticker", "Vekt (%)", "Drawdown (%)", "Bidrag (pp)", "Datakilde"]
+            st.dataframe(
+                c_df[show_cols].style.format({
+                    "Vekt (%)": "{:.1f}",
+                    "Drawdown (%)": "{:.1f}",
+                    "Bidrag (pp)": "{:+.2f}",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.warning("Ingen data tilgjengelig for denne krisen.")
+    else:
+        st.info("Klikk «Beregn krisedata» for å hente historiske priser og beregne drawdowns.")
+
+# ───────────────────────────────────────────────
+# FANE 8: PORTEFØLJEOPTIMERING
+# ───────────────────────────────────────────────
+
+with tab8:
     st.subheader("Porteføljeoptimering")
     st.caption("Identifiser svakheter og simuler vektjusteringer for å forbedre porteføljen.")
 
     vuln = calc_vulnerability_analysis(
-        reg_results, spy_result, ACTIVE_PORTFOLIO, SCENARIOS, port_betas
+        reg_results, spy_result, ACTIVE_PORTFOLIO, SCENARIOS, port_betas, **_regime_kw
     )
 
     # ── Sårbarhetsoversikt ──
@@ -966,12 +1208,12 @@ with tab7:
         st.markdown("#### Scenariopåvirkning av justeringene")
         sim_rows = []
         for name, scen in SCENARIOS.items():
-            orig_port = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, scen) * 100
-            bench = calc_benchmark_impact(spy_result, scen) * 100
+            orig_port = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, scen, **_regime_kw) * 100
+            bench = calc_benchmark_impact(spy_result, scen, **_regime_kw) * 100
 
             # Simulert portefølje
             sim_port = 0.0
-            stock_impacts = calc_all_stock_impacts(reg_results, scen)
+            stock_impacts = calc_all_stock_impacts(reg_results, scen, **_regime_kw)
             for ticker, w in sim_weights.items():
                 if ticker == "CASH":
                     continue
@@ -1020,10 +1262,10 @@ with tab7:
         st.dataframe(sim_df, use_container_width=True, hide_index=True)
 
 # ───────────────────────────────────────────────
-# FANE 8: AKSJESØK
+# FANE 9: AKSJESØK
 # ───────────────────────────────────────────────
 
-with tab8:
+with tab9:
     st.subheader("Aksjesøk & Sammenligning")
     st.caption("Søk opp en aksje og se hvordan den passer inn i porteføljen din.")
 
@@ -1194,8 +1436,8 @@ with tab8:
         scenario_rows_s = []
         for sc_name, sc_shocks in SCENARIOS.items():
             s_impact = _cap_impact(calc_stock_scenario_impact(s_betas, sc_shocks)) * 100
-            p_impact = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, sc_shocks) * 100
-            b_impact = calc_benchmark_impact(spy_result, sc_shocks) * 100
+            p_impact = calc_portfolio_impact(reg_results, ACTIVE_PORTFOLIO, sc_shocks, **_regime_kw) * 100
+            b_impact = calc_benchmark_impact(spy_result, sc_shocks, **_regime_kw) * 100
             scenario_rows_s.append({
                 "Scenario": sc_name,
                 s_ticker: round(s_impact, 2),
