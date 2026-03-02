@@ -522,8 +522,9 @@ with tab3:
 
     # Korrelasjonsheatmap
     st.subheader("Faktorkorrelasjon")
-    corr = factor_data[FACTOR_NAMES].corr()
-    corr_labels = [FACTOR_SHORT_NAMES.get(f, f) for f in FACTOR_NAMES]
+    available_factors = [f for f in FACTOR_NAMES if f in factor_data.columns]
+    corr = factor_data[available_factors].corr()
+    corr_labels = [FACTOR_SHORT_NAMES.get(f, f) for f in available_factors]
     fig_corr = px.imshow(corr.values, x=corr_labels, y=corr_labels,
                          text_auto=".2f", color_continuous_scale="RdBu_r",
                          color_continuous_midpoint=0, aspect="auto")
