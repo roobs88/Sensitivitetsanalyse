@@ -31,6 +31,26 @@ from lib.utils import normalize_weights, cache_timestamp
 st.set_page_config(page_title="Portefølje Scenarioanalyse", page_icon="📊", layout="wide")
 
 # ═══════════════════════════════════════════════
+# PASSORD
+# ═══════════════════════════════════════════════
+
+CORRECT_PASSWORD = st.secrets.get("APP_PASSWORD", "ODINUSA2026")
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("📊 Portefølje Scenarioanalyse")
+    password = st.text_input("Skriv inn passord for å få tilgang:", type="password")
+    if password:
+        if password == CORRECT_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Feil passord.")
+    st.stop()
+
+# ═══════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════
 
