@@ -13,7 +13,11 @@ from config.factors import (
 )
 from config.scenarios import SCENARIOS, BACKTEST_PERIODS
 from config.crises import CRISIS_PERIODS, SECTOR_PROXY
+from config.sectors import GICS_SECTORS, SP500_SECTOR_WEIGHTS
+from config.universe import US_STOCK_UNIVERSE
+from lib.correlation_analyzer import find_correlated_stocks
 from lib.crisis_analyzer import calc_all_crises
+from lib.utils import resolve_gics_sectors
 
 # Bump denne ved faktor-/modellendringer for å tvinge cache-invalidering
 _MODEL_VERSION = 2  # v2: fjernet YIELD_CURVE
@@ -252,10 +256,10 @@ with st.spinner("Laster data og kjører regresjoner..."):
 
 st.title("📊 Portefølje Scenarioanalyse")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Scenario Overview", "Scenario Deep Dive", "Faktoreksponering",
     "Regresjonsdiagnostikk", "Custom Scenario", "Historisk Backtest",
-    "Historiske Kriser", "Porteføljeoptimering", "Aksjesøk",
+    "Historiske Kriser", "Sektorfordeling", "Porteføljeoptimering", "Aksjesøk",
 ])
 
 # ───────────────────────────────────────────────
@@ -1038,10 +1042,131 @@ with tab7:
         st.info("Klikk «Beregn krisedata» for å hente historiske priser og beregne drawdowns.")
 
 # ───────────────────────────────────────────────
-# FANE 8: PORTEFØLJEOPTIMERING
+# FANE 8: SEKTORFORDELING
 # ───────────────────────────────────────────────
 
 with tab8:
+    st.subheader("Sektorfordeling")
+    st.caption("Porteføljens GICS-sektorfordeling sammenlignet med S&P 500.")
+
+    # Auto-oppdag GICS-sektorer for ukjente tickers
+    portfolio_tickers = [t for t in ACTIVE_PORTFOLIO if t != "CASH"]
+    sector_map, auto_tickers, failed_tickers = resolve_gics_sectors(
+        portfolio_tickers, GICS_SECTORS,
+    )
+    if auto_tickers:
+        st.info(f"Hentet sektor automatisk for: {', '.join(auto_tickers)}")
+    if failed_tickers:
+        st.warning(f"Kunne ikke finne sektor for: {', '.join(failed_tickers)}")
+
+    # Aggreger porteføljevekter per GICS-sektor
+    sector_weights: dict[str, float] = {}
+    unmapped_weight = 0.0
+    for t, w in ACTIVE_PORTFOLIO.items():
+        if t == "CASH":
+            continue
+        sec = sector_map.get(t)
+        if sec:
+            sector_weights[sec] = sector_weights.get(sec, 0.0) + w
+        else:
+            unmapped_weight += w
+
+    # Normaliser til 100 % (ekskl. CASH)
+    total_w = sum(sector_weights.values()) + unmapped_weight
+    if total_w > 0:
+        sector_weights = {s: v / total_w * 100 for s, v in sector_weights.items()}
+
+    # Alle sektorer (union av portefølje + S&P 500)
+    all_sectors = sorted(set(list(sector_weights.keys()) + list(SP500_SECTOR_WEIGHTS.keys())))
+
+    # Bygg sammenlignings-DataFrame
+    sec_rows = []
+    for sec in all_sectors:
+        pw = sector_weights.get(sec, 0.0)
+        sp = SP500_SECTOR_WEIGHTS.get(sec, 0.0)
+        sec_rows.append({
+            "Sektor": sec,
+            "Portefølje (%)": round(pw, 1),
+            "S&P 500 (%)": round(sp, 1),
+            "Over/undervekt (pp)": round(pw - sp, 1),
+        })
+    sec_df = pd.DataFrame(sec_rows).sort_values("Over/undervekt (pp)", ascending=False)
+
+    # KPI-er
+    most_over = sec_df.iloc[0]
+    most_under = sec_df.iloc[-1]
+
+    kpi1, kpi2 = st.columns(2)
+    kpi1.metric(
+        "Mest overvektet",
+        most_over["Sektor"],
+        f"+{most_over['Over/undervekt (pp)']:.1f} pp",
+    )
+    kpi2.metric(
+        "Mest undervektet",
+        most_under["Sektor"],
+        f"{most_under['Over/undervekt (pp)']:.1f} pp",
+    )
+
+    # Layout: pie + bar
+    col_pie, col_bar = st.columns(2)
+
+    with col_pie:
+        st.markdown("#### Porteføljens sektorfordeling")
+        pie_df = pd.DataFrame({
+            "Sektor": list(sector_weights.keys()),
+            "Vekt": list(sector_weights.values()),
+        }).sort_values("Vekt", ascending=False)
+        fig_pie = px.pie(
+            pie_df, names="Sektor", values="Vekt",
+            hole=0.35,
+        )
+        fig_pie.update_traces(textposition="inside", textinfo="label+percent")
+        fig_pie.update_layout(height=450, showlegend=False)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    with col_bar:
+        st.markdown("#### Portefølje vs S&P 500")
+        bar_df = sec_df.sort_values("Portefølje (%)", ascending=True)
+        fig_bar = go.Figure()
+        fig_bar.add_trace(go.Bar(
+            y=bar_df["Sektor"], x=bar_df["Portefølje (%)"],
+            name="Portefølje", orientation="h", marker_color="#636EFA",
+        ))
+        fig_bar.add_trace(go.Bar(
+            y=bar_df["Sektor"], x=bar_df["S&P 500 (%)"],
+            name="S&P 500", orientation="h", marker_color="#EF553B",
+        ))
+        fig_bar.update_layout(
+            barmode="group", height=450, template="plotly_white",
+            xaxis_title="Vekt (%)", legend=dict(orientation="h", y=1.1),
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    # Tabell
+    st.markdown("#### Detaljert sammenligning")
+
+    def _color_diff(val):
+        if val > 0:
+            return "color: green"
+        elif val < 0:
+            return "color: red"
+        return ""
+
+    styled_sec = sec_df.style.map(
+        _color_diff, subset=["Over/undervekt (pp)"]
+    ).format({
+        "Portefølje (%)": "{:.1f}",
+        "S&P 500 (%)": "{:.1f}",
+        "Over/undervekt (pp)": "{:+.1f}",
+    })
+    st.dataframe(styled_sec, use_container_width=True, hide_index=True)
+
+# ───────────────────────────────────────────────
+# FANE 9: PORTEFØLJEOPTIMERING
+# ───────────────────────────────────────────────
+
+with tab9:
     st.subheader("Porteføljeoptimering")
     st.caption("Identifiser svakheter og simuler vektjusteringer for å forbedre porteføljen.")
 
@@ -1266,10 +1391,10 @@ with tab8:
         st.dataframe(sim_df, use_container_width=True, hide_index=True)
 
 # ───────────────────────────────────────────────
-# FANE 9: AKSJESØK
+# FANE 10: AKSJESØK
 # ───────────────────────────────────────────────
 
-with tab9:
+with tab10:
     st.subheader("Aksjesøk & Sammenligning")
     st.caption("Søk opp en aksje og se hvordan den passer inn i porteføljen din.")
 
@@ -1525,3 +1650,146 @@ with tab9:
             "Estimert effekt (%)": "{:.2f}",
         })
         st.dataframe(styled_comp, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # ══════════════════════════════════════
+        # Seksjon F: Korrelerte aksjer
+        # ══════════════════════════════════════
+        st.subheader(f"F) Korrelerte aksjer med bedre profil")
+        st.caption(
+            "Aksjer i et bredt US-univers (~150 aksjer) som er korrelert med "
+            f"**{s_ticker}** men har bedre risikojustert avkastning. "
+            "Basert på 3 års daglige data."
+        )
+
+        # Auto-kjør med session_state-caching
+        corr_cache = st.session_state.get("corr_cache", {})
+        if corr_cache.get("ticker") != s_ticker:
+            with st.spinner(f"Analyserer korrelasjon mot {s_ticker} (kan ta ~30s)..."):
+                corr_df, ref_stats = find_correlated_stocks(
+                    s_ticker, US_STOCK_UNIVERSE, period="3y", min_corr=0.50,
+                    return_ref_stats=True,
+                )
+            st.session_state["corr_cache"] = {
+                "ticker": s_ticker,
+                "data": corr_df,
+                "ref_stats": ref_stats,
+            }
+        else:
+            corr_df = corr_cache["data"]
+            ref_stats = corr_cache.get("ref_stats", {})
+
+        if corr_df.empty:
+            st.warning("Fant ingen aksjer med korrelasjon ≥ 0.50.")
+        else:
+            st.success(f"Fant **{len(corr_df)}** korrelerte aksjer (korrelasjon ≥ 0.50)")
+
+            # Referanse-info
+            if ref_stats:
+                st.markdown(
+                    f"**Referanse — {s_ticker}:** "
+                    f"Årlig avk. {ref_stats['Årlig avk. (%)']:.1f}%, "
+                    f"Vol. {ref_stats['Vol. (%)']:.1f}%, "
+                    f"Sharpe {ref_stats['Sharpe']:.2f}, "
+                    f"Max DD {ref_stats['Max Drawdown (%)']:.1f}%"
+                )
+
+            # KPI-oppsummering
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            best_sharpe_row = corr_df.loc[corr_df["Sharpe"].idxmax()]
+            best_ret_row = corr_df.loc[corr_df["Årlig avk. (%)"].idxmax()]
+            low_vol_row = corr_df.loc[corr_df["Vol. (%)"].idxmin()]
+            low_dd_row = corr_df.loc[corr_df["Max Drawdown (%)"].idxmax()]  # minst negativ
+            kpi1.metric("Beste Sharpe", f"{best_sharpe_row['Ticker']}", f"{best_sharpe_row['Sharpe']:.2f}")
+            kpi2.metric("Beste avkastning", f"{best_ret_row['Ticker']}", f"{best_ret_row['Årlig avk. (%)']:.1f}%")
+            kpi3.metric("Lavest volatilitet", f"{low_vol_row['Ticker']}", f"{low_vol_row['Vol. (%)']:.1f}%")
+            kpi4.metric("Minst drawdown", f"{low_dd_row['Ticker']}", f"{low_dd_row['Max Drawdown (%)']:.1f}%")
+
+            # Sorteringsvalg
+            sort_col_map = {
+                "Sharpe": ("Sharpe", False),
+                "Korrelasjon": ("Korrelasjon", False),
+                "Avkastning": ("Årlig avk. (%)", False),
+                "Volatilitet": ("Vol. (%)", True),
+                "Max Drawdown": ("Max Drawdown (%)", False),  # minst negativ først
+            }
+            sort_choice = st.selectbox(
+                "Sorter etter", list(sort_col_map.keys()), index=0, key="corr_sort",
+            )
+            sort_key, sort_asc = sort_col_map[sort_choice]
+            sorted_df = corr_df.sort_values(sort_key, ascending=sort_asc).reset_index(drop=True)
+
+            # Bygg display-DataFrame med sammenligningskolonner
+            display_df = sorted_df.copy()
+            if ref_stats:
+                display_df["Lavere vol?"] = (display_df["Vol. (%)"] < ref_stats["Vol. (%)"]).map({True: "✅", False: ""})
+                display_df["Bedre Sharpe?"] = (display_df["Sharpe"] > ref_stats["Sharpe"]).map({True: "✅", False: ""})
+                display_df["Bedre avkastning?"] = (display_df["Årlig avk. (%)"] > ref_stats["Årlig avk. (%)"]).map({True: "✅", False: ""})
+                display_df["Lavere drawdown?"] = (display_df["Max Drawdown (%)"] > ref_stats["Max Drawdown (%)"]).map({True: "✅", False: ""})
+
+            st.dataframe(
+                display_df.style.format({
+                    "Korrelasjon": "{:.3f}",
+                    "Årlig avk. (%)": "{:.1f}",
+                    "Vol. (%)": "{:.1f}",
+                    "Sharpe": "{:.2f}",
+                    "Max Drawdown (%)": "{:.1f}",
+                }),
+                use_container_width=True,
+                hide_index=True,
+                height=min(400, 35 * len(display_df) + 40),
+            )
+
+            # Scatter-plot 1: Korrelasjon vs Sharpe (boblestørrelse = avkastning)
+            scatter1 = corr_df.copy()
+            scatter1["Avkastning (abs)"] = scatter1["Årlig avk. (%)"].abs() + 1  # unngå 0-størrelse
+            fig_scatter1 = px.scatter(
+                scatter1, x="Korrelasjon", y="Sharpe",
+                size="Avkastning (abs)", hover_name="Ticker",
+                hover_data={"Årlig avk. (%)": ":.1f", "Vol. (%)": ":.1f", "Avkastning (abs)": False},
+                title="Korrelasjon vs Sharpe (boblestørrelse = avkastning)",
+                template="plotly_white",
+            )
+            if ref_stats:
+                fig_scatter1.add_hline(y=ref_stats["Sharpe"], line_dash="dash", line_color="red",
+                                       annotation_text=f"{s_ticker} Sharpe")
+            st.plotly_chart(fig_scatter1, use_container_width=True)
+
+            # Scatter-plot 2: Volatilitet vs Avkastning (farge = korrelasjon)
+            fig_scatter2 = px.scatter(
+                corr_df, x="Vol. (%)", y="Årlig avk. (%)",
+                color="Korrelasjon", hover_name="Ticker",
+                hover_data={"Sharpe": ":.2f", "Max Drawdown (%)": ":.1f"},
+                color_continuous_scale="Viridis",
+                title="Volatilitet vs Avkastning (farge = korrelasjon)",
+                template="plotly_white",
+            )
+            if ref_stats:
+                fig_scatter2.add_traces(go.Scatter(
+                    x=[ref_stats["Vol. (%)"]], y=[ref_stats["Årlig avk. (%)"]],
+                    mode="markers+text", text=[s_ticker], textposition="top center",
+                    marker=dict(size=14, color="red", symbol="diamond"),
+                    showlegend=False,
+                ))
+            st.plotly_chart(fig_scatter2, use_container_width=True)
+
+            # Bar chart: topp 15 korrelerte aksjer med Sharpe
+            top15 = corr_df.nlargest(15, "Sharpe").sort_values("Sharpe", ascending=True)
+            fig_corr = go.Figure()
+            fig_corr.add_trace(go.Bar(
+                y=top15["Ticker"], x=top15["Sharpe"],
+                orientation="h", marker_color="#636EFA",
+                text=top15["Sharpe"].apply(lambda x: f"{x:.2f}"),
+                textposition="outside",
+            ))
+            if ref_stats:
+                fig_corr.add_vline(
+                    x=ref_stats["Sharpe"], line_dash="dash", line_color="red",
+                    annotation_text=f"{s_ticker}: {ref_stats['Sharpe']:.2f}",
+                )
+            fig_corr.update_layout(
+                title=f"Topp 15 korrelerte aksjer — Sharpe ratio (3 år)",
+                xaxis_title="Sharpe", height=450, template="plotly_white",
+            )
+            st.plotly_chart(fig_corr, use_container_width=True)

@@ -1,0 +1,73 @@
+"""GICS-sektordefinisjoner for porteføljeaksjer og S&P 500-vekter."""
+
+# GICS-sektor for alle porteføljeaksjer
+GICS_SECTORS = {
+    "MSFT":  "Information Technology",
+    "GOOG":  "Communication Services",
+    "AMZN":  "Consumer Discretionary",
+    "BRK-B": "Financials",
+    "AAPL":  "Information Technology",
+    "SPGI":  "Financials",
+    "CPRT":  "Industrials",
+    "OTIS":  "Industrials",
+    "WM":    "Industrials",
+    "TMO":   "Health Care",
+    "TSM":   "Information Technology",
+    "APH":   "Information Technology",
+    "CNM":   "Industrials",
+    "MA":    "Financials",
+    "CPAY":  "Financials",
+    "BKNG":  "Consumer Discretionary",
+    "AZO":   "Consumer Discretionary",
+    "CFR":   "Financials",
+    "PEP":   "Consumer Staples",
+    "HSY":   "Consumer Staples",
+    "V":     "Financials",
+    "ROP":   "Information Technology",
+    "MDT":   "Health Care",
+    "GWW":   "Industrials",
+    "EW":    "Health Care",
+    "CDW":   "Information Technology",
+    "META":  "Communication Services",
+    "SITE":  "Industrials",
+    "EXP":   "Materials",
+    "UNH":   "Health Care",
+    "MMC":   "Financials",
+    "EME":   "Industrials",
+    "SNPS":  "Information Technology",
+    "VEEV":  "Health Care",
+    "VRSN":  "Information Technology",
+    "CSL":   "Industrials",
+    "OTCM":  "Financials",
+    "FND":   "Consumer Discretionary",
+}
+
+# S&P 500 sektorvekter (ca. mars 2025)
+SP500_SECTOR_WEIGHTS = {
+    "Information Technology": 31.0,
+    "Financials":            14.2,
+    "Health Care":           11.5,
+    "Consumer Discretionary": 10.5,
+    "Communication Services":  9.0,
+    "Industrials":             8.5,
+    "Consumer Staples":        5.8,
+    "Energy":                  3.5,
+    "Utilities":               2.5,
+    "Real Estate":             2.3,
+    "Materials":               2.2,
+}
+
+# Sektor-ETF mapping (utvidelse av SECTOR_PROXY-logikken)
+ETF_TO_SECTOR = {
+    "XLK": "Information Technology",
+    "XLF": "Financials",
+    "XLV": "Health Care",
+    "XLY": "Consumer Discretionary",
+    "XLC": "Communication Services",
+    "XLI": "Industrials",
+    "XLP": "Consumer Staples",
+    "XLE": "Energy",
+    "XLU": "Utilities",
+    "XLRE": "Real Estate",
+    "XLB": "Materials",
+}
